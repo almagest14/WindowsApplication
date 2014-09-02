@@ -1,4 +1,5 @@
-﻿using WindowsApplication.Common;
+﻿using Windows.Graphics.Display;
+using WindowsApplication.Common;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -21,8 +22,9 @@ namespace WindowsApplication
     /// <summary>
     /// A basic page that provides characteristics common to most applications.
     /// </summary>
-    public sealed partial class MainPage : Page
+    public sealed partial class PhotoPage : Page
     {
+        private string mruToken = null;
 
         private NavigationHelper navigationHelper;
         private ObservableDictionary defaultViewModel = new ObservableDictionary();
@@ -44,8 +46,7 @@ namespace WindowsApplication
             get { return this.navigationHelper; }
         }
 
-
-        public MainPage()
+        public PhotoPage()
         {
             this.InitializeComponent();
             this.navigationHelper = new NavigationHelper(this);
@@ -64,19 +65,39 @@ namespace WindowsApplication
         /// <see cref="Frame.Navigate(Type, Object)"/> when this page was initially requested and
         /// a dictionary of state preserved by this page during an earlier
         /// session. The state will be null the first time a page is visited.</param>
-        private void navigationHelper_LoadState(object sender, LoadStateEventArgs e)
+        private async void navigationHelper_LoadState(object sender, LoadStateEventArgs e)
         {
-            if (e.PageState != null && e.PageState.ContainsKey("greetingOutputText"))
+            if (e.PageState != null && e.PageState.ContainsKey("mruToken"))
             {
-                greetingOutput.Text = e.PageState["greetingOutputText"].ToString();
-            }
+                object value = null;
+                if (e.PageState.TryGetValue("mruToken", out value))
+                {
+                    if (value != null)
+                    {
+                        mruToken = value.ToString();
 
-            // Restore values stored in app data.
-            Windows.Storage.ApplicationDataContainer roamingSettings = Windows.Storage.ApplicationData.Current.RoamingSettings;
+                        // Open the file via the token that you stored when adding this file into the MRU list.
+                        Windows.Storage.StorageFile file =
+                            await Windows.Storage.AccessCache.StorageApplicationPermissions.MostRecentlyUsedList.GetFileAsync(mruToken);
 
-            if (roamingSettings.Values.ContainsKey("userName"))
-            {
-                nameInput.Text = roamingSettings.Values["userName"].ToString();
+                        if (file != null)
+                        {
+                            // Open a stream for the selected file.
+                            Windows.Storage.Streams.IRandomAccessStream fileStream =
+                                await file.OpenAsync(Windows.Storage.FileAccessMode.Read);
+
+                            // Set the image source to a bitmap.
+                            Windows.UI.Xaml.Media.Imaging.BitmapImage bitmapImage =
+                                new Windows.UI.Xaml.Media.Imaging.BitmapImage();
+
+                            bitmapImage.SetSource(fileStream);
+                            displayImage.Source = bitmapImage;
+
+                            // Set the data context for the page.
+                            this.DataContext = file;
+                        }
+                    }
+                }
             }
         }
 
@@ -90,7 +111,10 @@ namespace WindowsApplication
         /// serializable state.</param>
         private void navigationHelper_SaveState(object sender, SaveStateEventArgs e)
         {
-            e.PageState["greetingOutputText"] = greetingOutput.Text;
+            if (!string.IsNullOrEmpty(mruToken))
+            {
+                e.PageState["mruToken"] = mruToken;
+            }
         }
 
         #region NavigationHelper registration
@@ -116,23 +140,51 @@ namespace WindowsApplication
 
         #endregion
 
-        private void Button_Click(object sender, RoutedEventArgs e)
+        private void PhotoPage_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            greetingOutput.Text = "Hello, " + nameInput.Text + "!";
-        }
-
-        private void NameInput_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            Windows.Storage.ApplicationDataContainer roamingSettings = Windows.Storage.ApplicationData.Current.RoamingSettings;
-            roamingSettings.Values["userName"] = nameInput.Text;
-        }
-
-        private void PhotoPageButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (this.Frame != null)
+            if (e.NewSize.Height / e.NewSize.Width >= 1)
             {
-                this.Frame.Navigate(typeof(PhotoPage));
+                VisualStateManager.GoToState(this, "Portrait", true);
             }
+            else
+            {
+                VisualStateManager.GoToState(this, "DefaultLayout", true);
+            }
+        }
+
+        private async void GetPhotoButton_Click(object sender, RoutedEventArgs e)
+        {
+            Windows.Storage.Pickers.FileOpenPicker openPicker = new Windows.Storage.Pickers.FileOpenPicker();
+
+            openPicker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary;
+            openPicker.ViewMode = Windows.Storage.Pickers.PickerViewMode.Thumbnail;
+
+            // Filter to include a sample subset of file types.
+            openPicker.FileTypeFilter.Clear();
+            openPicker.FileTypeFilter.Add(".bmp");
+            openPicker.FileTypeFilter.Add(".png");
+            openPicker.FileTypeFilter.Add(".jpeg");
+            openPicker.FileTypeFilter.Add(".jpg");
+
+            // Open the file picker.
+            Windows.Storage.StorageFile file = await openPicker.PickSingleFileAsync();
+
+            // file is null if user cancels the file picker.
+            if (file != null)
+            {
+                // Open a stream for the selected file.
+                Windows.Storage.Streams.IRandomAccessStream fileStream = await file.OpenAsync(Windows.Storage.FileAccessMode.Read);
+
+                // Set the image source to the selected bitmap.
+                Windows.UI.Xaml.Media.Imaging.BitmapImage bitmapImage = new Windows.UI.Xaml.Media.Imaging.BitmapImage();
+
+                bitmapImage.SetSource(fileStream);
+                displayImage.Source = bitmapImage;
+                this.DataContext = file;
+
+                mruToken = Windows.Storage.AccessCache.StorageApplicationPermissions.MostRecentlyUsedList.Add(file);
+            }
+
         }
     }
 }
